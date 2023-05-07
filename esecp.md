@@ -33,7 +33,7 @@
    &emsp;3.1.2. [时间管理模块即对定时器的抽象](#3.1.2)\
    &emsp;3.1.3. [内存管理模块即对内存的抽象](#3.1.3)\
    &emsp;3.1.4. [文件系统即对存储器/磁盘的抽象](#3.1.4)\
-   &emsp;3.1.5. [驱动框架即抽象](#3.1.5)\
+   &emsp;3.1.5. [驱动框架即对设备的抽象](#3.1.5)\
    3.2. [操作系统分类](#3.2)\
    &emsp;3.2.1. [术语辨析](#3.2.1)\
    &emsp;3.2.2. [桌面操作系统和实时操作系统的关联](#3.2.2)\
@@ -373,4 +373,136 @@ AARCH64是ARMv8-A架构下的64位指令集架构，支持64位寻址空间和64
 
 ##  3. <a name='3'></a>从应用软件抽象学操作系统
 
+### 3.1. <a name='3.1'></a>操作系统即对硬件的抽象
+
+操作系统是对硬件的抽象。嵌入式系统中的硬件不外乎处理器（CORES）、内部存储（RAM/DDR等片上存储器）、存储器（FLASH/EMMC等外部大容量存储设备）、普通外部设备和网络接口。因而可以将操作系统内核分解为
+
+- 任务管理（对处理器的抽象）
+- 内存管理（对内部存储的抽象）
+- 文件管理（对存储器的抽象）
+- 设备管理（对外设的抽象）
+- 网络管理（对网络接口的抽象）
+
+等五个模块。
+
+鉴于实时操作系统对时间约束的强调，
+- 时间管理
+
+应当作为一个单独的功能模块被讨论。
+
+#### 3.1.1. 调度器即对处理核的抽象
+既然任务管理是对处理器的抽象，而处理器分给任务的资源即任务占用处理器的时间，那么管理多任务/多线程可以理解为管理CPU占用时间。
+
+运行、就绪、阻塞、挂起，或者初始、运行、关闭，这些都是常见的任务状态，见表格1-1。但不论各个操作系统内核对任务的状态做了何种细致的划分，本质上的区别始终不变————任务是否占用CPU。
+
+|表格 3-1-1-1 | |
+|--|--|
+|参考 | 论述 |
+| [freertos-task-states](https://www.freertos.org/zh-cn-cmn-s/RTOS-task-states.html) | - |
+| [rt-thread-task-states](https://www.rt-thread.org/document/site/#/rt-thread-version/rt-thread-standard/programming-manual/thread/thread) | 从运行的过程上划分，线程有多种不同的运行状态，如初始状态、挂起状态、就绪状态等 |
+
+所以学习系统内核的任务管理模块，主要关注两个方面:
+
+- 创建/销毁任务
+- 分配CPU时间
+- 
+#### 3.1.2. 时间管理模块即对定时器的抽象
+（基于硬件定时器）提供多个软件定时器。
+RT Thread是通过硬件定时器中断维护一个系统心跳计数SysTic，同时提供硬件中断和软件中断API。特性见表格 3-1-1-1。
+
+| 表格 3-1-2-1 | |
+|--|--|
+| 参考 | 论述 |
+| [时钟管理 (rt-thread.org)](https://www.rt-thread.org/document/site/#/rt-thread-version/rt-thread-standard/programming-manual/timer/timer) | 中断之间的时间间隔取决于不同的应用，一般是 1ms–100ms，时钟节拍率越快，系统的实时响应越快，但是系统的额外开销就越大。|
+
+FreeRTOS的软件定时器完全由内核代理，用户不能直接使用硬件定时器中断。当且仅当软件定时器超时时从中断上下文执行计时器回调函数，此外不会消耗任何CPU处理时间，不会向SYSTIC中断增加任何处理开销。在禁用中断时不会遍历（Walk）任何链接列表结构。特性见表格3-1-2-2。
+
+| 表格 3-1-2-2 | |
+| -- | -- |
+| 参考 | 论述 |
+[161204_Mastering_the_FreeRTOS_Real_Time_Kernel-A_Hands-On_Tutorial_Guide.pdf](https://www.freertos.org/fr-content-src/uploads/2018/07/161204_Mastering_the_FreeRTOS_Real_Time_Kernel-A_Hands-On_Tutorial_Guide.pdf) | Software timers are implemented by, and are under the control of, the FreeRTOS kernel. They do not require hardware support, and are not related to hardware timers or hardware counters. | 
+| 参考 | 论述 |
+| [FreeRTOS - RTOS software timer functionality and features description](https://www.freertos.org/RTOS-software-timer.html) | The FreeRTOS implementation does not execute timer callback functions from an interrupt context, does not consume any processing time unless a timer has actually expired, does not add any processing overhead to the tick interrupt, and does not walk any link list structures while interrupts are disabled. |
+
+##### 3.1.2.1 软件定时器回调函数
+
+软件定时器回调函数（Software Timer Callback Functions）在软件定时器超时事件发生被调用。
+FreeRTOS的软件定时器回调函数在设计上固定函数原型为void类型返回值，仅有一个TimerHandler_t类型的参数，调用过程中不允许进入阻塞态（也即不允许调用可能造成当前任务被挂起的API）。
+
+| 表格 1-3-2-1-1 | |
+| -- | -- |
+| 参考 | 论述 |
+| [161204_Mastering_the_FreeRTOS_Real_Time_Kernel-A_Hands-On_Tutorial_Guide.pdf/p150 section 5.2](https://www.freertos.org/fr-content-src/uploads/2018/07/161204_Mastering_the_FreeRTOS_Real_Time_Kernel-A_Hands-On_Tutorial_Guide.pdf) | Software timer callback functions execute from start to finish, and exit in the normal way. They should be kept short, and must not enter the Blocked state. |
+| 参考 | 论述 |
+| [161204_Mastering_the_FreeRTOS_Real_Time_Kernel-A_Hands-On_Tutorial_Guide.pdf/p154 section 5.4](https://www.freertos.org/fr-content-src/uploads/2018/07/161204_Mastering_the_FreeRTOS_Real_Time_Kernel-A_Hands-On_Tutorial_Guide.pdf) | Software timer callback functions must not call FreeRTOS API functions that will result in the calling task entering the Blocked state, as to do so will result in the daemon task entering the Blocked state. |
+
+##### 3.1.2.2 软件延时
+FreeRTOS延时会向定时器命令队列发送时间戳，超时时间基于发送的时间戳计算，而不依赖于延时命令何时被daemon task处理。
+
+| 表格 3-1-2-2-1 | |
+|--|--|
+| 参考 | 论述 |
+| [161204_Mastering_the_FreeRTOS_Real_Time_Kernel-A_Hands-On_Tutorial_Guide.pdf/p158 section 5.4](https://www.freertos.org/fr-content-src/uploads/2018/07/161204_Mastering_the_FreeRTOS_Real_Time_Kernel-A_Hands-On_Tutorial_Guide.pdf) | For example, if a ‘start a timer’ command is sent to start a timer that has a period of 10 ticks, the time stamp is used to ensure the timer being started expires 10 ticks after the command was sent, not 10 ticks after the command was processed by the daemon task.
+
+RT Thread的内核文档中则没有提及这一点。
+
+| 表格 3-1-2-2-2 | |
+| -- | -- |
+| 参考 | 论述 |
+| [时钟管理 (rt-thread.org)/定时器管理](https://www.rt-thread.org/document/site/#/rt-thread-version/rt-thread-standard/programming-manual/timer/timer?id=%e5%ae%9a%e6%97%b6%e5%99%a8%e7%ae%a1%e7%90%86) | - |
+
+##### 3.1.2.3 软件定时器服务线程（任务）
+
+管理软件定时器的专用线程（或者进程，在这里我们把所有任务视作线程），守护线程（daemon thread）的前身。
+
+#### 3.1.3. 内存管理模块即对内存的抽象
+
+划定RAM中某一区域用作动态内存区域，交由内存管理器管理分配和释放。
+对RTOS而言，较短的建立时间是值得追求的，所以内存管理并非必要的，FreeRTOS自9.0.0版本开始就能完全静态创建各种对象。见表格3-1-3-1。
+
+
+|表格 3-1-3-1 | |
+|--|--|
+|参考 | 论述 |
+[161204_Mastering_the_FreeRTOS_Real_Time_Kernel-A_Hands-On_Tutorial_Guide.pdf/p25 chapter 2](https://www.freertos.org/fr-content-src/uploads/2018/07/161204_Mastering_the_FreeRTOS_Real_Time_Kernel-A_Hands-On_Tutorial_Guide.pdf) | From FreeRTOS V9.0.0 FreeRTOS applications can be completely statically allocated, removing the need to include a heap memory manager
+
+##### 3.1.3.1 动态内存管理的弊端
+
+动态内存管理（Dynamic Memory Allocation）的弊端本质上是管理算法与嵌入式系统的适配问题。常规的管理算法本就不是面向资源有限的嵌入式系统设计的，通常是臃肿而复杂的、非线程安全的（rarely thread-safe）、实时性不确定的（not deterministic，即每次调用耗费的时间不能确定），贸然引入这这类内存管理算法将造成软件调试和维护的困难。
+FreeRTOS的设计者认为不同的嵌入式系统需要不同的管理算法，因此在发布系统时预备了五种可选的管理方案。见表格 3-1-2-1-1
+
+| 表格 3-1-2-1-1 | |
+| -- | -- | 
+| 参考 | 论述 | 
+[161204_Mastering_the_FreeRTOS_Real_Time_Kernel-A_Hands-On_Tutorial_Guide.pdf/p27 chapter 2-1](https://www.freertos.org/fr-content-src/uploads/2018/07/161204_Mastering_the_FreeRTOS_Real_Time_Kernel-A_Hands-On_Tutorial_Guide.pdf) | This is in recognition of the fact that different embedded systems have varying dynamic memory allocation and timing requirements |
+
+
+#### 3.1.4. 文件系统即对存储器/磁盘的抽象
+
+在操作系统中，文件系统是对存储设备的抽象。文件系统提供了一种标准的接口，使得应用程序可以通过这个接口来访问存储设备中的文件。文件系统将存储设备中的数据组织成一个层次结构，每个文件都有一个唯一的文件名和路径。应用程序可以通过文件名和路径来访问文件，而不需要知道文件在存储设备中的具体位置。文件系统还提供了一些高级功能，如文件的读写、创建、删除、重命名等，使得文件的使用更加方便和灵活。
+
+#### 3.1.5. 驱动框架即对设备的抽象
+
+操作系统的驱动框架是对设备的抽象，它提供了一种标准的接口，使得应用程序可以通过这个接口来访问设备，而不需要了解设备的具体细节。这种抽象的好处在于，它可以使得应用程序的开发变得更加简单和高效，因为应用程序不需要了解设备的底层细节，只需要调用驱动框架提供的接口即可。
+
+驱动框架的实现通常包括两个部分：设备驱动和设备管理器。设备驱动是一个软件模块，它负责与硬件设备进行通信，并将设备的功能暴露给操作系统。设备管理器则负责管理所有的设备驱动，并提供一个标准的接口，使得应用程序可以通过这个接口来访问设备。
+
+通过驱动框架的抽象，操作系统可以将不同类型的设备统一管理，从而提高了系统的可扩展性和可维护性。
+
+### 3.2. 操作系统分类
+#### 3.2.1. 术语辨析
+#### 3.2.2. 桌面操作系统和实时操作系统的关联
+
+   3.3. [操作系统是一种软件编程范式](#3.4)\
+   &emsp;3.3.1. [精简开发是使用操作系统的初心使命](#3.3.1)\
+   &emsp;3.3.2. [借助调度器实现多任务协同](#3.3.2)\
+   &emsp;3.3.3. [借助文件系统进行数据存取](#3.3.3)\
+   &emsp;3.3.4. [了解设备驱动和设备树](#3.3.4)\
+   3.4. [实战：一招吃遍多任务编程](#3.4)
+
 ##  4. <a name='4'></a>从需求分析出发学协同软件设计
+   4.1. [搞清软硬件协同设计的原因和目的](#4.1)\
+   4.2. [拆解需求](#4.2)\
+   4.3. [软硬件任务划分](#4.3)\
+   4.4. [实时性分析](#4.4)\
+   4.5. [实战：录音笔方案臆想](#4.5)
